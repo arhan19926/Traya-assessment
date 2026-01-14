@@ -187,7 +187,7 @@ function matchOptionFromInput(question: Question, rawInput: string): QuestionOpt
 // --- Main Chat Component ---
 export function HairQuizChat() {
   const [questionsMap, setQuestionsMap] = useState<Record<string, Question>>({});
-  const [startQuestionId, setStartQuestionId] = useState<string | null>(null);
+  const [_setStartQuestionId, setStartQuestionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -297,7 +297,7 @@ export function HairQuizChat() {
 
     window.setTimeout(() => {
       setIsBotTyping(false)
-      setMessages((prev) => {
+      setMessages((prev:any) => {
         const newMessages = [
           ...prev,
           {
@@ -332,7 +332,7 @@ export function HairQuizChat() {
   }
 
   // Helper to advance to the next question
-  const goToNext = (question: Question, replyValue: string, option?: QuestionOption) => {
+  const goToNext = (question: Question, replyValue: string, _matchedOption?: QuestionOption) => {
     const nextId = computeNextId(question.raw, replyValue, questionsMap)
 
     if (!nextId || !questionsMap[nextId]) {
@@ -359,7 +359,7 @@ export function HairQuizChat() {
       setIsBotTyping(false)
       setCurrentQuestionId(nextQuestion.id)
       setQuestionStack((prev) => [...prev, nextQuestion.id]) // Add to history
-      setMessages((prev) => {
+      setMessages((prev:any) => {
         const newMessages = [
           ...prev,
           {
@@ -401,7 +401,7 @@ export function HairQuizChat() {
     window.setTimeout(() => {
       setIsBotTyping(false)
       setCurrentQuestionId(prevQuestion.id)
-      setMessages((prev) => {
+      setMessages((prev:any) => {
         const newMessages = [
           ...prev,
           {
@@ -450,7 +450,6 @@ export function HairQuizChat() {
 
   // Validates user input for specific question types
   const validateInput = (question: Question, value: string): string | null => {
-    const lower = value.toLowerCase()
 
     if (question.id === 'first_name') {
       if (value.length < 2) {
