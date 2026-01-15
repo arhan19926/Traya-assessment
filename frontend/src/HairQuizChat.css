@@ -297,3 +297,35 @@
     color: #cbd5e0; /* text-gray-400 */
     text-align: center;
   }
+  /* Add to frontend/src/HairQuizChat.css */
+
+.chat-file-input-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px; /* rounded-full */
+  background-color: #10b981; /* bg-teal-500 */
+  padding: 0.625rem 1rem; /* px-4 py-2.5 */
+  color: #1a202c; /* text-gray-900 */
+  font-size: 1rem; /* text-base */
+  font-weight: 600; /* font-semibold */
+  transition: all 0.15s ease-in-out;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1); /* shadow-lg */
+  cursor: pointer;
+  flex-grow: 1; /* Make it take full width */
+  text-align: center;
+}
+
+.chat-file-input-label:hover:not(:disabled) {
+  background-color: #047857; /* hover:bg-teal-600 */
+  box-shadow: 0 10px 15px -3px rgba(45, 212, 191, 0.3), 0 4px 6px -4px rgba(45, 212, 191, 0.3);
+}
+
+.chat-file-input-label:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-file-input {
+  display: none; /* Hide the default file input */
+}

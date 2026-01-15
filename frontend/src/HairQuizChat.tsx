@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react'
 import './HairQuizChat.css' // Import the custom CSS file
 
 // --- Type Definitions for Data from Backend API ---
@@ -17,7 +17,7 @@ type RawQuestion = {
   tag: string // e.g., "user", "form"
   text: string // The question text
   tamil_text?: string // Localized text
-  type: string // e.g., "text", "tel", "single_choice", "multiple_choice"
+  type: string // e.g., "text", "tel", "single_choice", "multiple_choice", "file"
   optionMap?: RawOption[] // Options for choice questions
   fn?: {
     if?: unknown[] // JSONLogic-style branching
@@ -42,10 +42,14 @@ type Message = {
   id: string
   sender: 'bot' | 'user'
   text: string
-  type?: 'text' | 'typing'
+  type?: 'text' | 'typing' // 'text' by default, 'typing' for bot typing indicator
   options?: QuestionOption[] // To display clickable options with bot messages
   isCurrentQuestion?: boolean // To highlight current question's options
+  imageUrl?: string // For displaying uploaded images
 }
+
+// --- Process Raw Quiz Config into Internal QUESTIONS map ---
+let QUESTIONS_MAP_GLOBAL: Record<string, Question> = {}; // Global to be set after fetch
 
 // --- Helper Functions for NLP and Logic ---
 function normalise(text: string): string {
@@ -53,7 +57,7 @@ function normalise(text: string): string {
 }
 
 // Evaluates the 'fn.if' JSONLogic-like structure from raw config
-function computeNextId(raw: RawQuestion, replyValue: string, allQuestions: Record<string, Question>): string | null {
+function computeNextId(raw: RawQuestion, replyValue: string): string | null {
   const baseNext = raw.next ?? null
   const fn = raw.fn
   const ifArr = fn && Array.isArray(fn.if) ? (fn.if as unknown[]) : null
@@ -78,12 +82,10 @@ function computeNextId(raw: RawQuestion, replyValue: string, allQuestions: Recor
           typeof expectedValue === 'string' &&
           expectedValue === replyValue
         ) {
-          // Check if the targetNextId actually exists in our QUESTIONS map
-          if (allQuestions[targetNextId]) {
+          if (QUESTIONS_MAP_GLOBAL[targetNextId]) {
             return targetNextId
           } else {
             console.warn(`computeNextId: Target question ID '${targetNextId}' not found in fetched questions.`)
-            // Fallback to baseNext or the general fallback
           }
         }
       }
@@ -91,7 +93,7 @@ function computeNextId(raw: RawQuestion, replyValue: string, allQuestions: Recor
   }
 
   const lastItem = ifArr[ifArr.length - 1]
-  if (typeof lastItem === 'string' && allQuestions[lastItem]) {
+  if (typeof lastItem === 'string' && QUESTIONS_MAP_GLOBAL[lastItem]) {
     return lastItem
   }
 
@@ -114,10 +116,9 @@ function matchOptionFromInput(question: Question, rawInput: string): QuestionOpt
     const isFemaleIntent = femaleKeywords.test(value) && !maleKeywords.test(value)
     const isUnsureIntent = unsureKeywords.test(value)
 
-    if (isMaleIntent) return question.options.find((opt) => normalise(opt.value!) === 'm') // Match 'M' for Male
-    if (isFemaleIntent) return question.options.find((opt) => normalise(opt.value!) === 'f') // Match 'F' for Female
+    if (isMaleIntent) return question.options.find((opt) => normalise(opt.value!) === 'm')
+    if (isFemaleIntent) return question.options.find((opt) => normalise(opt.value!) === 'f')
     if (isUnsureIntent) {
-      // If there's an 'other' option in the config, use it. Otherwise, it will fall through.
       return question.options.find((opt) => normalise(opt.label).includes('other'))
     }
   }
@@ -150,7 +151,6 @@ function matchOptionFromInput(question: Question, rawInput: string): QuestionOpt
     // 5) Enhanced Fuzzy: check for significant keywords and partial matches
     const words = value.split(/\s+/).filter(Boolean); // Split input into words
 
-    // Try to find an option where multiple words from the input match parts of the option label/value
     let bestMatch: { option: QuestionOption; score: number } | undefined = undefined;
 
     for (const option of question.options) {
@@ -165,12 +165,10 @@ function matchOptionFromInput(question: Question, rawInput: string): QuestionOpt
         }
       }
 
-      // Prioritize options that contain more matching words, or an exact partial match
       if (score > 0) {
         if (!bestMatch || score > bestMatch.score) {
           bestMatch = { option, score };
         } else if (score === bestMatch.score) {
-          // If scores are equal, prefer a shorter option if it's a perfect subset
           if (normalisedLabel.length < normalise(bestMatch.option.label).length && normalisedLabel.includes(value)) {
             bestMatch = { option, score };
           }
@@ -187,7 +185,7 @@ function matchOptionFromInput(question: Question, rawInput: string): QuestionOpt
 // --- Main Chat Component ---
 export function HairQuizChat() {
   const [questionsMap, setQuestionsMap] = useState<Record<string, Question>>({});
-  const [_setStartQuestionId, setStartQuestionId] = useState<string | null>(null);
+  const [_startQuestionId, setStartQuestionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,26 +194,28 @@ export function HairQuizChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isBotTyping, setIsBotTyping] = useState(false)
   const [input, setInput] = useState('')
+  // Store answers including Base64 for images
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string | { data: string; mimeType: string }>>({}); 
 
   const chatMessagesRef = useRef<HTMLDivElement>(null) // Ref for scrolling
   const inputRef = useRef<HTMLInputElement>(null); // Ref for auto-focusing input
+
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
   // --- Fetch questions from backend ---
   useEffect(() => {
     const fetchQuizConfig = async () => {
       try {
-        const backendUrl = import.meta.env.VITE_BACKEND_URL;
-        if (!backendUrl) {
+        if (!BACKEND_URL) {
           throw new Error('VITE_BACKEND_URL is not defined in environment variables.');
         }
         
-        const response = await fetch(`${backendUrl}/api/quiz/questions`);
+        const response = await fetch(`${BACKEND_URL}/api/quiz/questions`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
         
-        // Process fetched raw questions into internal format
         const processedQuestions: Record<string, Question> = {};
         let firstQId: string | null = null;
         if (data && Array.isArray(data.questions)) {
@@ -233,16 +233,23 @@ export function HairQuizChat() {
               options,
               raw,
             };
-            if (!firstQId) firstQId = raw.id; // Set the first question ID from the fetched data
+            if (!firstQId) firstQId = raw.id;
           }
         }
 
-        setQuestionsMap(processedQuestions);
-        setStartQuestionId(firstQId);
-        setCurrentQuestionId(firstQId); // Set initial current question
-        setQuestionStack([firstQId!]); // Initialize stack with first question
+        QUESTIONS_MAP_GLOBAL = processedQuestions; // Set global map
+        if (firstQId) {
+          setStartQuestionId(firstQId);
+        } else {
+          console.warn("No starting question ID found in fetched quiz config. Using fallback 'first_name'.");
+          setStartQuestionId('first_name'); // Fallback in case of empty config
+        }
 
-        // Initialize messages after questions are loaded
+        setQuestionsMap(processedQuestions);
+        // Ensure initial currentQuestionId and stack are set after fetching
+        setCurrentQuestionId(firstQId);
+        setQuestionStack([firstQId!]); // Use ! as we have a fallback for firstQId
+
         if (firstQId && processedQuestions[firstQId]) {
             setMessages([
                 {
@@ -269,7 +276,7 @@ export function HairQuizChat() {
     };
 
     fetchQuizConfig();
-  }, []); // Run only once on mount
+  }, [BACKEND_URL]);
 
 
   // Scroll to the bottom of the chat when messages update or bot is typing
@@ -281,17 +288,45 @@ export function HairQuizChat() {
 
   // Auto-focus input when currentQuestionId changes (i.e., a new question is asked)
   useEffect(() => {
-    if (inputRef.current && !isBotTyping && currentQuestionId) {
+    if (inputRef.current && !isBotTyping && currentQuestionId && questionsMap[currentQuestionId]?.raw.type !== 'file') {
       inputRef.current.focus();
     }
-  }, [currentQuestionId, isBotTyping]);
+  }, [currentQuestionId, isBotTyping, questionsMap]);
 
 
   const currentQuestion = currentQuestionId ? questionsMap[currentQuestionId] : undefined;
 
+  // Function to submit quiz answers to backend
+  const submitQuizAnswers = async (answers: Record<string, string | { data: string; mimeType: string }>) => {
+    if (!BACKEND_URL) {
+      console.error('VITE_BACKEND_URL is not defined, cannot submit answers.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/quiz/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(answers),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Submission failed: ${response.statusText}`);
+      }
+
+      console.log('Quiz answers submitted successfully!');
+      // Optionally handle success message or redirect
+    } catch (submitError) {
+      console.error('Error submitting quiz answers:', submitError);
+      showBotMessage('There was an error submitting your quiz. Please try again.');
+    }
+  };
+
 
   // Helper to display a bot message with typing indicator
-  const showBotMessage = (text: string, nextQuestionId: string | null = null, options?: QuestionOption[]) => {
+  const showBotMessage = (text: string, nextQuestionId: string | null = null, options?: QuestionOption[], imageUrl?: string) => {
     setIsBotTyping(true)
     setCurrentQuestionId(null) // Temporarily hide input options while bot is typing or for validation errors
 
@@ -306,6 +341,7 @@ export function HairQuizChat() {
             text: text,
             options: options,
             isCurrentQuestion: !!nextQuestionId, // Mark as current if it's a re-ask or new question
+            imageUrl: imageUrl, // Pass image URL for bot messages if needed
           },
         ];
 
@@ -332,16 +368,26 @@ export function HairQuizChat() {
   }
 
   // Helper to advance to the next question
-  const goToNext = (question: Question, replyValue: string, _matchedOption?: QuestionOption) => {
-    const nextId = computeNextId(question.raw, replyValue, questionsMap)
+  const goToNext = (question: Question, replyValue: string, _option?: QuestionOption) => {
+    // Store answer based on question type
+    if (question.raw.type === 'file') {
+      // replyValue already contains { data: base64, mimeType: string } from handleFileChange
+      setQuizAnswers(prev => ({ ...prev, [question.id]: replyValue as unknown as { data: string; mimeType: string } }));
+    } else {
+      setQuizAnswers(prev => ({ ...prev, [question.id]: replyValue }));
+    }
+
+    const nextId = computeNextId(question.raw, replyValue)
 
     if (!nextId || !questionsMap[nextId]) {
       // End of this flow or no next question defined – show a summary
       showBotMessage(
         'Thanks for sharing! We’re analysing your responses to recommend the best Traya plan for you.'
-      )
-      setCurrentQuestionId(null) // End the quiz flow
-      return
+      );
+      setCurrentQuestionId(null); // End the quiz flow
+      // Submit all answers, including the last one
+      submitQuizAnswers({ ...quizAnswers, [question.id]: replyValue }); 
+      return;
     }
 
     // Move to the next question in the selected branch with a typing delay
@@ -397,6 +443,13 @@ export function HairQuizChat() {
     setIsBotTyping(true)
     setCurrentQuestionId(null) // Temporarily hide input
     setQuestionStack(newStack)
+    // Also remove the last answer when going back
+    setQuizAnswers(prev => {
+        const newAnswers = { ...prev };
+        delete newAnswers[questionStack[questionStack.length - 1]];
+        return newAnswers;
+    });
+
 
     window.setTimeout(() => {
       setIsBotTyping(false)
@@ -426,7 +479,7 @@ export function HairQuizChat() {
         return newMessages;
       });
     }, 400)
-  }, [isBotTyping, questionStack, questionsMap, currentQuestionId, showBotMessage]);
+  }, [isBotTyping, questionStack, questionsMap, currentQuestionId, showBotMessage, setQuizAnswers]);
 
 
   // Handles when a user clicks on an option button
@@ -446,6 +499,46 @@ export function HairQuizChat() {
     // Then proceed to the next question based on the selected option
     goToNext(currentQuestion, option.value ?? option.label, option)
   }
+
+  // Handle file input change (reads file as Base64)
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!currentQuestion || !event.target.files || event.target.files.length === 0) return;
+
+    const file = event.target.files[0];
+    const fileName = file.name;
+
+    // Display image in chat immediately using a temporary Object URL
+    const objectUrl = URL.createObjectURL(file); 
+    setMessages((prev) => [
+        ...prev,
+        {
+            id: `user-file-${Date.now()}`,
+            sender: 'user',
+            text: `Uploaded: ${fileName}`,
+            imageUrl: objectUrl, // Display the image preview
+        },
+    ]);
+    
+    // Read file as Base64 for sending to backend
+    const reader = new FileReader();
+    reader.onload = () => {
+        const base64Data = reader.result as string; // Will be "data:image/jpeg;base64,..."
+        const mimeType = file.type;
+        const filePayload = { data: base64Data, mimeType: mimeType };
+
+        // Save the Base64 data and mimeType in quizAnswers
+        setQuizAnswers(prev => ({ ...prev, [currentQuestion.id]: filePayload }));
+        
+        // Advance the quiz after file selection
+        // Use a placeholder string as replyValue for advancement logic, as the actual data is in quizAnswers
+        goToNext(currentQuestion, `File: ${fileName}`); 
+    };
+    reader.onerror = (error) => {
+        console.error("Error reading file:", error);
+        showBotMessage("Failed to read the file. Please try again.");
+    };
+    reader.readAsDataURL(file); // Read as Base64
+  };
 
 
   // Validates user input for specific question types
@@ -474,7 +567,7 @@ export function HairQuizChat() {
     if (question.id === 'C1d' /* age question */) {
       const ageMatch = value.match(/\d{1,3}/)
       if (!ageMatch) {
-        return 'Please provide your age or an age range (e.g., "27").'
+        return 'Please provide your age (e.g., "27").'
       }
       const age = Number(ageMatch[0])
       if (age < 18 || age > 120) { // Updated age validation: must be >= 18
@@ -490,7 +583,7 @@ export function HairQuizChat() {
     if (!currentQuestion || isBotTyping) return
 
     const value = input.trim()
-    if (!value) return
+    if (!value && currentQuestion.raw.type !== 'file') return 
 
     // Special commands first
     const lower = value.toLowerCase()
@@ -500,7 +593,15 @@ export function HairQuizChat() {
       return
     }
 
-    // Perform validation for specific question types
+    // For file input, `handleFileChange` is the primary handler.
+    if (currentQuestion.raw.type === 'file') {
+      // If the user tries to submit an empty text for a file input, prompt them to choose a file.
+      showBotMessage('Please choose a file to upload to continue.', currentQuestion.id);
+      return; 
+    }
+
+
+    // Perform validation for specific question types (for text inputs)
     const validationError = validateInput(currentQuestion, value)
     if (validationError) {
       showBotMessage(validationError, currentQuestion.id) // Show specific error
@@ -508,7 +609,7 @@ export function HairQuizChat() {
       return
     }
 
-    // Add user message to chat history
+    // Add user message to chat history (only for text input)
     setMessages((prev) => [
       ...prev,
       {
@@ -516,12 +617,13 @@ export function HairQuizChat() {
         sender: 'user',
         text: value,
       },
-    ])
-    setInput('') // Clear input field
+    ]);
+    setInput(''); // Clear input field
+    
 
     // Determine the next step based on question type (options or free text)
     if (currentQuestion.options.length === 0) {
-      // For free-text input questions (like name, phone, age, custom text feedback)
+      // For free-text input questions
       goToNext(currentQuestion, value)
       return
     }
@@ -551,6 +653,10 @@ export function HairQuizChat() {
 
   const inputTip = (() => {
     if (!currentQuestion) return null
+
+    if (currentQuestion.raw.type === 'file') {
+        return <p className="chat-tip-text">Tip: Click "Choose File" to upload your scalp image.</p>
+    }
 
     if (currentQuestion.options.length > 0) {
       return (
@@ -619,6 +725,10 @@ export function HairQuizChat() {
                 className={`chat-message-bubble ${message.sender === 'user' ? 'user' : 'bot'} ${message.sender === 'bot' && message.isCurrentQuestion ? 'current-question' : ''}`}
               >
                 <p className="chat-message-text">{message.text}</p>
+                {/* Display image for user messages, if available */}
+                {message.imageUrl && message.sender === 'user' && (
+                  <img src={message.imageUrl} alt="Uploaded scalp" className="mt-2 max-w-full h-auto rounded-lg" />
+                )}
                 {message.options && message.isCurrentQuestion && (
                   <div className="chat-options-container">
                     {message.options.map((option) => (
@@ -651,29 +761,57 @@ export function HairQuizChat() {
 
         <footer className="chat-footer">
           <div className="chat-input-area">
-            <input
-              ref={inputRef} // Attach ref here
-              type="text"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  handleUserSubmit()
-                }
-              }}
-              disabled={!currentQuestion || isBotTyping}
-              placeholder={!isBotTyping ? inputPlaceholder : 'Please wait...'}
-              className="chat-input"
-            />
-            <button
-              type="button"
-              onClick={handleUserSubmit}
-              disabled={!currentQuestion || isBotTyping || !input.trim()}
-              className="chat-send-button"
-            >
-              Send
-            </button>
+            {currentQuestion?.raw.type === 'file' ? (
+                // Only show file input if it's the current question AND not currently typing
+                (!isBotTyping && currentQuestionId === currentQuestion.id) ? (
+                  <label className="chat-file-input-label">
+                      Choose File
+                      <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFileChange}
+                          disabled={isBotTyping}
+                          className="chat-file-input"
+                      />
+                  </label>
+                ) : (
+                  // Show a disabled input or placeholder if bot is typing or question isn't active
+                  <input
+                      type="text"
+                      disabled={true}
+                      placeholder="Waiting for the next question..."
+                      className="chat-input"
+                  />
+                )
+            ) : (
+                <input
+                    ref={inputRef} // Attach ref here
+                    type="text"
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                            event.preventDefault()
+                            handleUserSubmit()
+                        }
+                    }}
+                    disabled={!currentQuestion || isBotTyping}
+                    placeholder={!isBotTyping ? inputPlaceholder : 'Please wait...'}
+                    className="chat-input"
+                />
+            )}
+            
+            {/* The send button is only for text inputs */}
+            {currentQuestion?.raw.type !== 'file' && ( 
+                <button
+                    type="button"
+                    onClick={handleUserSubmit}
+                    disabled={!currentQuestion || isBotTyping || !input.trim()}
+                    className="chat-send-button"
+                >
+                    Send
+                </button>
+            )}
           </div>
           {inputTip}
           {!currentQuestion && !isBotTyping && (
