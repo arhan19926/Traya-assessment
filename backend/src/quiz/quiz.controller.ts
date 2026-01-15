@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Res, Param, HttpStatus } from '@nestjs/com
 import { QuizService } from './quiz.service'; // Import the service
 import { type Response } from 'express'; // Import Response for direct manipulation
 
-import * as rawQuizConfig from '../../util/data/quizConfig.json'; 
+import { RAW_QUIZ_CONFIG } from '../../util/data/quizConfig'; 
 
 @Controller('api/quiz')
 export class QuizController {
@@ -12,7 +12,7 @@ export class QuizController {
 
   @Get('questions')
   getQuizQuestions() {
-    return rawQuizConfig;
+    return RAW_QUIZ_CONFIG;
   }
 
   @Post('submit')
