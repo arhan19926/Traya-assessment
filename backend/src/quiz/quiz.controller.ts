@@ -1,8 +1,8 @@
 import { Controller, Get, Post, Body, Res, Param, HttpStatus } from '@nestjs/common';
 import { QuizService } from './quiz.service'; // Import the service
 import { type Response } from 'express'; // Import Response for direct manipulation
+import { QuizConfig } from 'util/data/quizConfig';
 
-import { RAW_QUIZ_CONFIG } from '../../util/data/quizConfig'; 
 
 @Controller('api/quiz')
 export class QuizController {
@@ -11,9 +11,16 @@ export class QuizController {
   ) {}
 
   @Get('questions')
-  getQuizQuestions() {
-    return RAW_QUIZ_CONFIG;
+  async getQuizQuestions(): Promise<QuizConfig> { // <--- Made async, now returning Promise
+    const config = await this.quizService.getQuizConfiguration();
+    if (!config) {
+        // Handle case where config is not found (e.g., throw error, return default)
+        throw new Error('Quiz configuration not found in database.');
+    }
+    // Return the questions array wrapped in the expected QuizConfig structure
+    return { questions: config.questions }; 
   }
+
 
   @Post('submit')
   async submitQuizAnswers(@Body() answers: Record<string, string | { data: string; mimeType: string }>) {

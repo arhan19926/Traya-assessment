@@ -3,12 +3,16 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { QuizController } from './quiz.controller';
 import { QuizService } from './quiz.service';
 import { QuizAnswer, QuizAnswerSchema } from './schemas/quiz-answer.schema';
+import { QuizConfigDoc, QuizConfigSchema } from './schemas/quiz-config.schema';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: QuizAnswer.name, schema: QuizAnswerSchema }]),
-  ],
-  controllers: [QuizController],
-  providers: [QuizService],
+    imports: [
+        MongooseModule.forFeature([
+            { name: QuizAnswer.name, schema: QuizAnswerSchema },
+            { name: QuizConfigDoc.name, schema: QuizConfigSchema }, 
+        ]),
+    ],
+    controllers: [QuizController],
+    providers: [QuizService],
 })
-export class QuizModule {}
+export class QuizModule { }
