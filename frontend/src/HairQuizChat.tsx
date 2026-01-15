@@ -368,25 +368,37 @@ export function HairQuizChat() {
   }
 
   // Helper to advance to the next question
-  const goToNext = (question: Question, replyValue: string, _option?: QuestionOption) => {
+  const goToNext = (
+    question: Question,
+    // --- MODIFIED HERE: replyValue can now be a string or the filePayload object ---
+    replyValue: string | { data: string; mimeType: string }, 
+    _option?: QuestionOption
+  ) => {
     // Store answer based on question type
-    if (question.raw.type === 'file') {
-      // replyValue already contains { data: base64, mimeType: string } from handleFileChange
-      setQuizAnswers(prev => ({ ...prev, [question.id]: replyValue as unknown as { data: string; mimeType: string } }));
+    if (question.raw.type === 'file' && typeof replyValue !== 'string') {
+      // If it's a file question and replyValue is the filePayload object
+      setQuizAnswers((prev) => ({ ...prev, [question.id]: replyValue }));
+    } else if (typeof replyValue === 'string') {
+      // For string answers (text inputs, options)
+      setQuizAnswers((prev) => ({ ...prev, [question.id]: replyValue }));
     } else {
-      setQuizAnswers(prev => ({ ...prev, [question.id]: replyValue }));
+      // Fallback for unexpected types (should not happen with correct usage)
+      console.warn('goToNext received unexpected replyValue type for question', question.id, replyValue);
+      setQuizAnswers((prev) => ({ ...prev, [question.id]: 'Invalid_Reply_Type' }));
     }
-
-    const nextId = computeNextId(question.raw, replyValue)
-
+  
+    // --- IMPORTANT: The computeNextId function still needs a string for its branching logic ---
+    const nextId = computeNextId(
+      question.raw,
+      typeof replyValue === 'string' ? replyValue : 'File Uploaded' // Use a generic string for logic
+    );
+  
     if (!nextId || !questionsMap[nextId]) {
       // End of this flow or no next question defined – show a summary
-      showBotMessage(
-        'Thanks for sharing! We’re analysing your responses to recommend the best Traya plan for you.'
-      );
+      showBotMessage('Thanks for sharing! We’re analysing your responses to recommend the best Traya plan for you.');
       setCurrentQuestionId(null); // End the quiz flow
-      // Submit all answers, including the last one
-      submitQuizAnswers({ ...quizAnswers, [question.id]: replyValue }); 
+      // Submit all answers. Ensure `replyValue` is correctly represented if it's an object.
+      submitQuizAnswers({ ...quizAnswers, [question.id]: typeof replyValue === 'string' ? replyValue : replyValue });
       return;
     }
 
@@ -500,46 +512,41 @@ export function HairQuizChat() {
     goToNext(currentQuestion, option.value ?? option.label, option)
   }
 
-  // Handle file input change (reads file as Base64)
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (!currentQuestion || !event.target.files || event.target.files.length === 0) return;
+// Handle file input change (reads file as Base64)
+const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+  if (!currentQuestion || !event.target.files || event.target.files.length === 0) return;
 
-    const file = event.target.files[0];
-    const fileName = file.name;
+  const file = event.target.files[0];
+  const fileName = file.name;
 
-    // Display image in chat immediately using a temporary Object URL
-    const objectUrl = URL.createObjectURL(file); 
-    setMessages((prev) => [
-        ...prev,
-        {
-            id: `user-file-${Date.now()}`,
-            sender: 'user',
-            text: `Uploaded: ${fileName}`,
-            imageUrl: objectUrl, // Display the image preview
-        },
-    ]);
-    
-    // Read file as Base64 for sending to backend
-    const reader = new FileReader();
-    reader.onload = () => {
-        const base64Data = reader.result as string; // Will be "data:image/jpeg;base64,..."
-        const mimeType = file.type;
-        const filePayload = { data: base64Data, mimeType: mimeType };
+  // Display image in chat immediately using a temporary Object URL
+  const objectUrl = URL.createObjectURL(file); 
+  setMessages((prev) => [
+      ...prev,
+      {
+          id: `user-file-${Date.now()}`,
+          sender: 'user',
+          text: `Uploaded: ${fileName}`,
+          imageUrl: objectUrl, // Display the image preview
+      },
+  ]);
+  
+  // Read file as Base64 for sending to backend
+  const reader = new FileReader();
+  reader.onload = () => {
+      const base64Data = reader.result as string; // Will be "data:image/jpeg;base64,..."
+      const mimeType = file.type;
+      const filePayload = { data: base64Data, mimeType: mimeType };
 
-        // Save the Base64 data and mimeType in quizAnswers
-        setQuizAnswers(prev => ({ ...prev, [currentQuestion.id]: filePayload }));
-        
-        // Advance the quiz after file selection
-        // Use a placeholder string as replyValue for advancement logic, as the actual data is in quizAnswers
-        goToNext(currentQuestion, `File: ${fileName}`); 
-    };
-    reader.onerror = (error) => {
-        console.error("Error reading file:", error);
-        showBotMessage("Failed to read the file. Please try again.");
-    };
-    reader.readAsDataURL(file); // Read as Base64
+      // --- CRITICAL FIX HERE: Pass the actual filePayload object ---
+      goToNext(currentQuestion, filePayload); 
   };
-
+  reader.onerror = (error) => {
+      console.error("Error reading file:", error);
+      showBotMessage("Failed to read the file. Please try again.");
+  };
+  reader.readAsDataURL(file); // Read as Base64
+};
 
   // Validates user input for specific question types
   const validateInput = (question: Question, value: string): string | null => {
@@ -758,32 +765,22 @@ export function HairQuizChat() {
             </div>
           )}
         </main>
-
         <footer className="chat-footer">
           <div className="chat-input-area">
-            {currentQuestion?.raw.type === 'file' ? (
-                // Only show file input if it's the current question AND not currently typing
-                (!isBotTyping && currentQuestionId === currentQuestion.id) ? (
-                  <label className="chat-file-input-label">
-                      Choose File
-                      <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleFileChange}
-                          disabled={isBotTyping}
-                          className="chat-file-input"
-                      />
-                  </label>
-                ) : (
-                  // Show a disabled input or placeholder if bot is typing or question isn't active
-                  <input
-                      type="text"
-                      disabled={true}
-                      placeholder="Waiting for the next question..."
-                      className="chat-input"
-                  />
-                )
+            {/* Condition: Show file input if it's the current question AND its type is 'file' AND bot is not typing */}
+            {currentQuestion?.raw.type === 'file' && !isBotTyping ? (
+                <label className="chat-file-input-label">
+                    Choose File
+                    <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        disabled={isBotTyping} // Still disable if bot is typing
+                        className="chat-file-input"
+                    />
+                </label>
             ) : (
+                // This block handles either text inputs OR a disabled placeholder
                 <input
                     ref={inputRef} // Attach ref here
                     type="text"
@@ -795,8 +792,17 @@ export function HairQuizChat() {
                             handleUserSubmit()
                         }
                     }}
-                    disabled={!currentQuestion || isBotTyping}
-                    placeholder={!isBotTyping ? inputPlaceholder : 'Please wait...'}
+                    // Disable if no current question, or bot is typing, or current question is file type (as file is handled by label)
+                    disabled={!currentQuestion || isBotTyping || currentQuestion?.raw.type === 'file'} 
+                    placeholder={
+                        !currentQuestion
+                            ? "Quiz complete!" // Or some other final message
+                            : isBotTyping
+                                ? 'Please wait...'
+                                : currentQuestion.raw.type === 'file'
+                                    ? 'Upload your image above' // Placeholder when file input is expected
+                                    : inputPlaceholder // Default text input placeholder
+                    }
                     className="chat-input"
                 />
             )}
