@@ -357,13 +357,7 @@ export function HairQuizChat() {
 
         return newMessages;
       })
-      // Re-enable input if it's a validation message for the current question
-      if (nextQuestionId && questionsMap[nextQuestionId]) {
         setCurrentQuestionId(nextQuestionId)
-      } else if (!nextQuestionId && currentQuestionId) {
-        // If no explicit next ID, and we had a current question, re-focus on it
-        setCurrentQuestionId(currentQuestionId)
-      }
     }, 600)
   }
 
@@ -392,6 +386,7 @@ export function HairQuizChat() {
       question.raw,
       typeof replyValue === 'string' ? replyValue : 'File Uploaded' // Use a generic string for logic
     );
+    console.log(nextId,currentQuestion?.id)
   
     if (!nextId || !questionsMap[nextId]) {
       // End of this flow or no next question defined – show a summary
@@ -770,7 +765,7 @@ const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
             {/* Condition: Show file input if it's the current question AND its type is 'file' AND bot is not typing */}
             {currentQuestion?.raw.type === 'file' && !isBotTyping ? (
                 <label className="chat-file-input-label">
-                    Choose File
+                    Choose File {currentQuestionId}
                     <input
                         type="file"
                         accept="image/*"
