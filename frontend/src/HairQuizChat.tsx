@@ -255,7 +255,7 @@ export function HairQuizChat() {
                 {
                     id: 'welcome',
                     sender: 'bot',
-                    text: 'Hi, I’m your Traya hair expert. Let’s start with a few quick questions to understand your hair better.',
+                    text: 'Hello, I’m your Traya hair expert. Let’s start with a few quick questions to understand your hair better.',
                 },
                 {
                     id: firstQId,
