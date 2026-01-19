@@ -386,7 +386,6 @@ export function HairQuizChat() {
       question.raw,
       typeof replyValue === 'string' ? replyValue : 'File Uploaded' // Use a generic string for logic
     );
-    console.log(nextId,currentQuestion?.id)
   
     if (!nextId || !questionsMap[nextId]) {
       // End of this flow or no next question defined – show a summary
@@ -765,7 +764,7 @@ const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
             {/* Condition: Show file input if it's the current question AND its type is 'file' AND bot is not typing */}
             {currentQuestion?.raw.type === 'file' && !isBotTyping ? (
                 <label className="chat-file-input-label">
-                    Choose File {currentQuestionId}
+                    Choose File
                     <input
                         type="file"
                         accept="image/*"
